@@ -13,72 +13,54 @@ This document provides an exploration of the iOS application rendering pipeline,
     * The Client-Server Model for UI Management  
     * High-Level Rendering Flow  
 
-2.  **The Application's Domain: UIKit and the CALayer Tree** 
+2.  **UIKit Interface and Layer Fundamentals** 
     * UIKit: The Application's Interface  
         * `UIView`: The Building Block  
         * `UIWindow`: The Root and System Interface  
         * Mapping View Properties to Layers   
-    * QuartzCore: The Foundation of Visuals  
+    * QuartzCore Foundation: CALayer and CAContext  
         * `CALayer`: The Atomic Unit of Rendering  
-        * Layer Geometry and Hierarchy  
-        * Layer Content: Backing Stores and Direct Assignment  
-        * Visual Effects and Appearance  
-        * Specialized `CALayer` Subtypes  
-    * `CAContext`: The Bridge to the Render Server  
-        * `UIWindow`'s Ownership of a `CAContext`  
+        * Layer Geometry, Hierarchy, and Content  
+        * Visual Effects and Specialized Layer Types  
+        * `CAContext`: The Bridge to the Render Server  
         * The Significance of the `contextID`  
 
-3.  **Scene Management: Orchestrating Application Presentation**  
-    * The Scene Abstraction: `FBSScene` and `FBScene`  
-        * `UIWindow`'s Link to `FBSScene`  
-        * The `FBSCAContextSceneLayer` and Content Association  
-    * Scene State Synchronization  
-        * `FBSSceneSettings` and `FBSSceneClientSettings`  
-        * Diffing for Efficient State Updates  
-    * `FBSWorkspace`: The Application's Communication Channel  
+3.  **Scene Management Architecture**  
+    * The Scene Abstraction and Client-Server Model  
+        * `FBSScene` (Client) and `FBScene` (Server)  
+        * `UIWindow`'s Link to Scene Management  
+        * Scene Content Association via `FBSCAContextSceneLayer`  
+    * Scene State Synchronization and Communication  
+        * Settings Objects and Diffing  
+        * `FBSWorkspace` and `FBSceneManager`  
+        * Scene Hosting and Remote Rendering  
+    * Transactional Operations and Scene Lifecycle  
 
-4.  **FrontBoard: The System's UI Conductor**  
-    * `FBSceneManager`: Central Scene Authority  
-    * `FBScene`: Server-Side Scene Representation  
-        * `FBSceneLayerManager`: Aggregating Scene Content  
-        * `FBSceneHostManager`: Displaying Scene Content  
-    * Scene Hosting and Remote Rendering  
-        * `FBSceneHostView` and `CAContextID`  
-        * The Role of `CARemoteLayerClient` and `CARemoteLayerServer`  
-    * Transactional Operations in FrontBoard  
+4.  **Synchronization, Animation, and Cross-Process Coordination**  
+    4.1. `CATransaction` and `CAAnimation` Fundamentals  
+    4.2. `FBSSceneTransitionContext`: Coordinated Scene State Changes  
+    4.3. `BKSAnimationFenceHandle`: Ensuring Visual Cohesion  
+        4.3.1. Fence Creation and Management  
+        4.3.2. `UIWindow`'s Role in Fence Coordination  
 
-5.  **Transactions, Animations, and Cross-Process Synchronization**  
-    5.1. `CATransaction`: Atomic Layer Updates  
-    5.2. `CAAnimation`: Dynamic Property Changes  
-    5.3. `FBSSceneTransitionContext`: Coordinated Scene State Changes  
-    5.4. `BKSAnimationFenceHandle`: Ensuring Visual Cohesion  
-        5.4.1. `CAContext` Fence Ports  
-        5.4.2. `UIWindow`'s Role in Fence Management  
+5.  **The Render Server, Compositing, and Display Hardware**  
+    5.1. The Render Server: Conceptual Overview  
+    5.2. Display Abstractions and Layout Management  
+    5.3. Final Output: From Composited Scene to Pixels  
 
-6.  **The Render Server, Compositing, and Display Hardware**  
-    6.1. The Render Server: Conceptual Overview  
-    6.2. `CAContext` as the Unit of Composition  
-    6.3. Display Abstractions: `FBSDisplayIdentity` and `FBSDisplayConfiguration`  
-    6.4. `FBDisplayManager` and `FBSDisplayLayout`: Arranging Content on Displays  
-    6.5. Final Output: From Composited Scene to Pixels  
+6.  **Input Event Handling in the Rendering Context**  
+    6.1. BackBoardServices and `BKSHIDEvent`  
+    6.2. Event Routing via `contextID` and `BKSEventFocusManager`  
+    6.3. `UIWindow` as the Event Target  
 
-7.  **Input Event Handling in the Rendering Context**  
-    7.1. BackBoardServices and `BKSHIDEvent`  
-    7.2. Event Routing via `contextID` and `BKSEventFocusManager`  
-    7.3. `UIWindow` as the Event Target  
+7.  **Specialized Rendering Paths and Considerations**  
+    7.1. Direct GPU Rendering: `CAMetalLayer` and `CAOpenGLLayer`  
+    7.2. Hosted UIKit Environments (UIKitSystemAppServices)  
+    7.3. Scene Snapshots for System Operations 
 
-8.  **Specialized Rendering Paths and Considerations**  
-    8.1. Direct GPU Rendering: `CAMetalLayer` and `CAOpenGLLayer`  
-    8.2. Hosted UIKit Environments (UIKitSystemAppServices)  
-    8.3. Scene Snapshots for System Operations 
-
-9.  **Conclusion and Key Interaction Visualizations**  
-    9.1. Summary of Rendering Flow  
-    9.2. Visualized Scenarios  
-        9.2.1. Application Launch and Initial Frame  
-        9.2.2. View Property Animation  
-        9.2.3. Window Resize and Orientation Change  
-        9.2.4. Synchronized Cross-Process Transition  
+8.  **Conclusion and Key Interaction Visualizations**  
+    8.1. Summary of Rendering Flow  
+    8.2. Visualized Scenarios  
 
 ---
 
@@ -126,7 +108,7 @@ graph TD
     E -. Manages / Composites .-> C
 ```
 
-### 2. The Application's Domain: UIKit and the CALayer Tree
+### 2. UIKit Interface and Layer Fundamentals
 
 #### 2.1. UIKit: The Application's Interface
 
@@ -151,23 +133,16 @@ UIKit provides the high-level framework for application development, abstracting
 *   **Interface Orientation:** The `UIWindow`, often in conjunction with its `rootViewController` and application settings, manages the interface orientation of its content.
 
 ##### 2.1.3. Mapping View Properties to Layers
-Every `UIView` instance is backed by a `CALayer` object. Changes to `UIView` properties are typically translated into corresponding changes on its underlying `CALayer`. For example:
+Every `UIView` instance is backed by a `CALayer` object. Changes to `UIView` properties are typically translated into corresponding changes on its underlying `CALayer`. UIKit manages this mapping, often batching layer updates through `CATransaction`s for efficiency.
 
-*   `view.frame` might update `layer.frame` or `layer.position` and `layer.bounds`.
-*   `view.alpha` maps to `layer.opacity`.
-*   `view.backgroundColor` maps to `layer.backgroundColor` (a `CGColorRef`).
-*   Adding a subview (`-[UIView addSubview:]`) adds the subview's layer to the superview's layer (`-[CALayer addSublayer:]`).
+#### 2.2. QuartzCore Foundation: CALayer and CAContext
 
-UIKit manages this mapping, often batching layer updates through `CATransaction`s for efficiency.
-
-#### 2.2. QuartzCore: The Foundation of Visuals
-
-QuartzCore is the framework that provides the `CALayer` class and the infrastructure for hardware-accelerated compositing and animation.
+QuartzCore provides the `CALayer` class and `CAContext` infrastructure for hardware-accelerated compositing and animation. This foundation bridges UIKit's view-based interface with the system's render server.
 
 ##### 2.2.1. `CALayer`: The Atomic Unit of Rendering
 `CALayer` is the fundamental object that QuartzCore uses to represent 2D and 3D content. Unlike `UIView`, `CALayer` is not a `UIResponder` and does not handle user interaction directly; its focus is solely on content presentation and animation.
 
-##### 2.2.2. Layer Geometry and Hierarchy
+**Layer Geometry and Hierarchy:**
 *   **`bounds`**: The layer's drawing rectangle in its own coordinate system.
 *   **`position`**: The position of the layer's `anchorPoint` in its superlayer's coordinate system.
 *   **`anchorPoint`**: A normalized point (0,0 to 1,1) within the layer that `position` refers to and around which transformations (like rotation) occur. Defaults to (0.5, 0.5), the center.
@@ -177,68 +152,34 @@ QuartzCore is the framework that provides the `CALayer` class and the infrastruc
 *   **`superlayer`**: The parent `CALayer`.
 *   **`zPosition`**: Affects the front-to-back ordering of sibling layers without true 3D perspective (unless within a `CATransformLayer`).
 
-##### 2.2.3. Layer Content: Backing Stores and Direct Assignment
-A `CALayer` can display content in several ways:
+**Layer Content and Visual Effects:**
+A `CALayer` can display content through multiple mechanisms:
 
-*   **`contents` property**: Can be assigned a `CGImageRef` (or `NSImage` on macOS, and other platform-specific types like `IOSurfaceRef` or `CAMachPortRef` via private mechanisms). This image is then drawn into the layer's bounds, respecting `contentsGravity`, `contentsScale`, and `contentsRect`.
-*   **Custom Drawing (`drawInContext:`)**: A `CALayer` subclass can override `drawInContext:`, or its delegate can implement `drawLayer:inContext:`. When the layer needs to update its content (e.g., after `setNeedsDisplay` is called), Core Animation creates a graphics context (a `CGContextRef`) representing the layer's backing store and invokes this method. The drawing performed here populates the backing store, which then becomes the layer's visual content.
+*   **`contents` property**: Can be assigned a `CGImageRef` (or platform-specific types like `IOSurfaceRef`). This image is drawn into the layer's bounds, respecting `contentsGravity`, `contentsScale`, and `contentsRect`.
+*   **Custom Drawing (`drawInContext:`)**: A `CALayer` subclass can override `drawInContext:`, or its delegate can implement `drawLayer:inContext:`. Core Animation creates a graphics context (`CGContextRef`) representing the layer's backing store when content updates are needed.
 *   **`backgroundColor`**: A `CGColorRef` that fills the layer's bounds.
 *   **`borderColor` / `borderWidth`**: Defines a border drawn around the layer's bounds.
 
-##### 2.2.4. Visual Effects and Appearance
-`CALayer` provides numerous properties for visual effects:
+Visual effects properties include:
+*   **`opacity`**: Controls transparency of the layer and its sublayers.
+*   **`cornerRadius`**: Creates rounded corners. If `masksToBounds` is `YES`, content outside these corners is clipped.
+*   **`shadowColor`, `shadowOpacity`, `shadowOffset`, `shadowRadius`, `shadowPath`**: Properties for rendering drop shadows.
+*   **`mask`**: Another `CALayer` whose alpha channel masks the receiver's content.
+*   **`filters`, `backgroundFilters`, `compositingFilter`**: Arrays of `CAFilter` objects for advanced visual effects.
 
-*   **`opacity`**: Controls the transparency of the layer and its sublayers.
-*   **`cornerRadius`**: Creates rounded corners. If `masksToBounds` is `YES`, content outside these rounded corners is clipped.
-*   **`maskedCorners`**: Allows specifying which corners receive the `cornerRadius` effect.
-*   **`masksToBounds`**: When `YES`, clips the layer's content and sublayers to its `bounds`.
-*   **`shadowColor`, `shadowOpacity`, `shadowOffset`, `shadowRadius`, `shadowPath`**: Properties for rendering a drop shadow.
-*   **`mask`**: Another `CALayer` whose alpha channel is used to mask the receiver's content.
-*   **`filters`, `backgroundFilters`, `compositingFilter`**: Arrays of `CAFilter` (Core Image filters) or specific compositing filter names that can be applied to the layer's content, its background, or how it blends with its background, respectively.
-
-##### 2.2.5. Specialized `CALayer` Subtype 
-QuartzCore offers several specialized `CALayer` subclasses for specific rendering tasks:
+**Specialized CALayer Subtypes:**
+QuartzCore offers specialized `CALayer` subclasses for specific rendering tasks:
 
 *   **`CATextLayer`**: Renders plain or attributed strings.
-*   **`CAShapeLayer`**: Renders a shape defined by a `CGPathRef`, with stroke and fill properties.
+*   **`CAShapeLayer`**: Renders shapes defined by `CGPathRef`, with stroke and fill properties.
 *   **`CAGradientLayer`**: Draws color gradients.
-*   **`CAReplicatorLayer`**: Creates multiple copies of its sublayers, each with potential transformations.
-*   **`CATransformLayer`**: Allows for true 3D perspective in its sublayer hierarchy, unlike a standard `CALayer` which flattens its children before applying its own 3D transform.
-*   **`CAEmitterLayer`**: Implements a particle emitter system.
-*   **`CAMetalLayer` / `CAOpenGLLayer`**: Provide surfaces for direct rendering with Metal and OpenGL, respectively, bypassing some of the standard `CALayer` content mechanisms. These are critical for games and graphics-intensive applications.
-*   **`CATiledLayer`**: Efficiently draws very large images or content by breaking it into tiles that are loaded and rendered on demand.
-*   **`CALayerHost`**: Allows a layer to display the content of a `CAContext` from potentially another process, identified by its `contextId`. This is fundamental for remote hosting.
-*   **`CAPortalLayer`**: A specialized layer that "copies" a source layer (potentially from another context) and renders it as if it were a sublayer.
+*   **`CAMetalLayer` / `CAOpenGLLayer`**: Provide surfaces for direct GPU rendering, critical for games and graphics-intensive applications.
+*   **`CATiledLayer`**: Efficiently draws very large content by breaking it into tiles loaded on demand.
+*   **`CALayerHost`**: Displays content of a `CAContext` from potentially another process, identified by its `contextId`. Fundamental for remote hosting.
+*   **`CATransformLayer`**: Allows true 3D perspective in its sublayer hierarchy, unlike standard `CALayer` which flattens children.
 
-#### 2.3. `CAContext`: The Bridge to the Render Server
-
-A `CAContext` is the object that embodies an independent rendering surface and layer tree that can be managed by the system's Render Server.
-
-##### 2.3.1. `UIWindow`'s Ownership of a `CAContext`
-A `UIWindow` typically creates and manages its own `CAContext`. The entire `CALayer` tree rooted at the window's primary layer (`window.layer`) is rendered into this `CAContext`.
-
-```mermaid
-graph TD
-    subgraph UIWindow
-        UIWindowLayer["CALayer (window.layer)"]
-    end
-
-    subgraph RootViewController
-        RootView["UIView (rootViewController.view)"]
-        RootLayer["CALayer (rootView.layer)"]
-        Subviews["Subview UIView/CALayers"]
-    end
-
-    subgraph QuartzCore
-        CAContext["CAContext (_layerContext)"]
-    end
-
-    UIWindow -->|has layer| UIWindowLayer
-    UIWindowLayer -->|hosts| RootLayer
-    RootLayer -->|contains| Subviews
-    UIWindowLayer -->|renders into| CAContext
-    CAContext -->|identified by| ContextID["contextID"]
-```
+##### 2.2.2. `CAContext`: The Bridge to the Render Server
+A `CAContext` is the object that embodies an independent rendering surface and layer tree managed by the system's Render Server. Each `UIWindow` typically creates and manages its own `CAContext`, into which its entire `CALayer` tree is rendered.
 
 ```mermaid
 graph TB
@@ -292,38 +233,42 @@ graph TB
     class IOSurface,GPU,Display kernel
 ```
 
-##### 2.3.2. The Significance of the `contextID`
-The `contextId` property of a `CAContext` is a unique 32-bit integer. This ID is critical because:
+**The Significance of the `contextID`:**
+The `contextId` property of a `CAContext` is a unique 32-bit integer that serves as the critical bridge between an application's UI and the system's rendering infrastructure:
 
 *   **Render Server Identification:** It's how the Render Server (a separate system process) identifies and manages the specific drawing surface associated with that part of the application's UI.
-*   **Inter-Process Referencing:** System services like FrontBoard use this `contextID` to refer to and manipulate an application's renderable content without needing direct access to the app's `CALayer` objects. This is key for remote hosting and scene management.
+*   **Inter-Process Referencing:** System services like FrontBoard use this `contextID` to refer to and manipulate an application's renderable content without needing direct access to the app's `CALayer` objects. This enables remote hosting and scene management.
 *   **Event Routing:** BackBoardServices uses the `contextID` of the focused window/layer to route touch and other hardware events to the correct application and specific part of its UI.
 
-The `CAContext` can be either local (rendered in-process, less common for app windows) or remote (where the actual rendering commands are sent to the Render Server). For standard applications, the context associated with a `UIWindow` is effectively a remote rendering target managed by the system.
+For standard applications, the context associated with a `UIWindow` is effectively a remote rendering target managed by the system, where rendering commands are sent to the Render Server for compositing.
 
-### 3. Scene Management: The Bridge to the System
+### 3. Scene Management Architecture
 
-While `CAContext` provides a renderable surface, the *management* of an application's overall presence on screen, its lifecycle, and its interaction with other UI elements is handled at a higher level by "Scenes," primarily orchestrated by the FrontBoard framework.
+While `CAContext` provides a renderable surface, the *management* of an application's overall presence on screen, its lifecycle, and its interaction with other UI elements is handled at a higher level by "Scenes," orchestrated by the FrontBoard framework using a client-server architecture.
 
-#### 3.1. The Scene Abstraction: `FBSScene` and `FBScene`
-iOS uses a scene-based model for managing application UI. A scene represents a distinct, manageable unit of an application's interface.
+#### 3.1. The Scene Abstraction and Client-Server Model
 
-*   **`FBSScene` (FrontBoardServices):** This is the client-side (application-side) object representing a scene. An application interacts with its `FBSScene` objects to manage settings, send actions, and respond to system-initiated updates.
-*   **`FBScene` (FrontBoard):** This is the server-side (FrontBoard process) counterpart. FrontBoard manages a collection of `FBScene` objects, representing all active scenes from various applications and system services.
+iOS uses a scene-based model for managing application UI, where each scene represents a distinct, manageable unit of an application's interface. This system operates through paired client and server objects:
+
+**Client Side (Application Process):**
+*   **`FBSScene` (FrontBoardServices):** The application-side object representing a scene. Applications interact with `FBSScene` objects to manage settings, send actions, and respond to system-initiated updates.
+*   **`FBSWorkspace`:** The primary channel for scene communication with the system, allowing apps to enumerate existing scenes, request creation/destruction of scenes, and receive lifecycle events via `FBSWorkspaceDelegate`.
+
+**Server Side (FrontBoard Process):**
+*   **`FBScene` (FrontBoard):** The server-side counterpart managing the scene within the system. FrontBoard manages collections of `FBScene` objects representing all active scenes from various applications and system services.
+*   **`FBSceneManager`:** The core object overseeing all `FBScene` instances, handling creation/destruction requests, settings adjudication, and observer notifications.
 
 Each scene is uniquely identified by a string `identifier` and often a `workspaceIdentifier`.
 
-#### 3.2. `UIWindow`'s Link to `FBSScene`
-A `UIWindow` is typically associated with an `FBSScene` instance. This association links the window's visual content (`CAContext`) to the system's scene management.
+#### 3.2. Scene Content Association via `FBSCAContextSceneLayer`
 
-##### 3.2.1. The `FBSCAContextSceneLayer` and Content Association
-The content of an `FBSScene` is defined by its layers (`FBSSceneLayer` objects). The most crucial type for application content is `FBSCAContextSceneLayer`.
+The critical link between a `UIWindow`'s `CAContext` and the scene management system occurs through scene layers:
 
 *   When a `UIWindow` is made visible and associated with an `FBSScene`, its `_layerContext` (a `CAContext`) is represented within that `FBSScene` as an `FBSCAContextSceneLayer`.
 *   The `FBSCAContextSceneLayer` carries the `contextID` of the window's `CAContext`.
 *   This `contextID` is the critical piece of information that allows FrontBoard (managing the server-side `FBScene`) to identify and display the actual rendered content from the application's process.
 
-Other layer types exist, such as `FBSExternalSceneLayer`, which allows one scene to embed the content of another scene (identified by its `sceneID`). This is used for features like Picture-in-Picture or Split View, where content from different apps or different parts of the same app needs to be composed together.
+Additional layer types include `FBSExternalSceneLayer`, which allows one scene to embed content from another scene (identified by its `sceneID`), enabling features like Picture-in-Picture or Split View.
 
 ```mermaid
 graph TD
@@ -331,58 +276,59 @@ graph TD
         UIWindow["UIWindow"] --> HasA --> CAContext["CAContext (contextID=123)"]
         UIWindow --> AssociatedWith --> FBSScene["FBSScene (id='appSceneA')"]
         FBSScene --> Contains --> FBSCALayer["FBSCAContextSceneLayer (contextID=123, level=1)"]
+        FBSWorkspace["FBSWorkspace"] --> Manages --> FBSScene
     end
 
     AppProcess -- IPC --> SystemProcess["System Process (FrontBoard)"]
 
     subgraph SystemProcess
-        FBScene["FBScene (id='appSceneA')"] --> Manages --> FBSceneLayerMgr["FBSceneLayerManager"]
-        FBSceneLayerMgr --> ContainsLayer --> FBSCALayer_FB["FBSCAContextSceneLayer (contextID=123, level=1)"]
+        FBSceneManager["FBSceneManager"] --> Oversees --> FBScene["FBScene (id='appSceneA')"]
+        FBScene --> Manages --> FBSceneLayerMgr["FBSceneLayerManager"]
+        FBSceneLayerMgr --> ContainsLayer --> FBSCALayer_FB["FBSCAContextSceneLayer (contextID=123)"]
         FBScene --> DisplayedBy --> FBSceneHostMgr["FBSceneHostManager"]
-        FBSceneHostMgr --> UsesContextID --> RenderServer["Render Server: Draw content for contextID 123"]
+        FBSceneHostMgr --> Provides --> FBSceneHostView["FBSceneHostView"]
+        FBSceneHostView --> UsesContextID --> RenderServer["Render Server: Draw content for contextID 123"]
     end
 ```
 
-#### 3.3. Scene State Synchronization
-The state and appearance of a scene are managed through settings objects that are synchronized between the application (client) and FrontBoard (server).
+#### 3.3. Scene State Synchronization and Communication
 
-##### 3.3.1. `FBSSceneSettings` and `FBSSceneClientSettings`
-*   **`FBSSceneSettings`:** These settings are controlled by the "server" (FrontBoard) and describe the system-imposed state of the scene. Key properties include:
-    *   `displayIdentity` / `displayConfiguration`: The display the scene is on.
-    *   `frame`: The scene's frame in the display's reference coordinate space.
-    *   `level`: The `FBSSceneLevel` (Z-ordering) of the scene.
-    *   `interfaceOrientation`: The current orientation of the scene.
-    *   `backgrounded`: A boolean indicating if the scene is considered to be in a background state.
-    *   `occlusions`: An array of `FBSSceneOcclusion` objects describing portions of the scene obscured by other UI.
-*   **`FBSSceneClientSettings`:** These settings are controlled by the "client" (the application) and communicate the application's preferences or desired state for the scene to the system. Key properties include:
-    *   `preferredLevel`: The application's desired `FBSSceneLevel`.
-    *   `preferredInterfaceOrientation`: The application's preferred orientation.
-    *   `occlusions`: Occlusions the client itself is applying *within* its scene (e.g., if an in-app modal is obscuring its own content).
-    *   `preferredSceneHostIdentifier`: If this scene wishes to be hosted by another specific scene.
+The state and appearance of scenes are managed through settings objects synchronized between the application (client) and FrontBoard (server):
 
-When an application wants to change its scene's client-side settings (e.g., request an orientation change), it updates its `FBSSceneClientSettings`. FrontBoard processes this, potentially updates its server-side `FBSceneSettings` (if the request is valid and permissible), and then propagates the new `FBSceneSettings` back to the application.
+**Settings Objects:**
+*   **`FBSSceneSettings` (Server-Controlled):** Describe the system-imposed state including `displayIdentity`, `frame`, `level` (Z-ordering), `interfaceOrientation`, `backgrounded` status, and `occlusions`.
+*   **`FBSSceneClientSettings` (Client-Controlled):** Communicate the application's preferences including `preferredLevel`, `preferredInterfaceOrientation`, and internal `occlusions`.
 
-##### 3.3.2. Diffing for Efficient State Updates
-To optimize communication, changes to settings are often transmitted as "diff" objects:
+**Efficient Updates:**
+Changes are transmitted as diff objects (`FBSSceneSettingsDiff`, `FBSSceneClientSettingsDiff`) with inspectors allowing observers to efficiently determine which specific settings changed.
 
-*   `FBSSceneSettingsDiff`: Represents changes between an old and a new `FBSSceneSettings` object.
-*   `FBSSceneClientSettingsDiff`: Represents changes for `FBSSceneClientSettings`.
+**Communication Flow:**
+When an application updates its `FBSSceneClientSettings`, FrontBoard processes the request, updates its server-side `FBSceneSettings` if valid, and propagates changes back to the application. The `FBSWorkspace` serves as the primary communication channel, handling scene enumeration, creation/destruction requests, and lifecycle events via `FBSWorkspaceDelegate`.
 
-Inspectors like `FBSSceneSettingsDiffInspector` and `FBSSceneClientSettingsDiffInspector` allow observers to efficiently determine which specific settings have changed without comparing entire objects.
+#### 3.4. Scene Hosting and Remote Rendering
 
-#### 3.4. `FBSWorkspace`: The Application's Communication Channel
-An `FBSWorkspace` object in the application process serves as the primary channel for interacting with the system's scene-managing service (FrontBoard). Through the `FBSWorkspace`, an application can:
+The server-side scene management enables remote rendering through several key components:
 
-*   Enumerate its existing `FBSScene`s.
-*   Request the creation of new scenes (providing initial `FBSSceneClientSettings`).
-*   Request the destruction of its scenes.
-*   Receive lifecycle events and settings updates for its scenes via the `FBSWorkspaceDelegate` protocol. Callbacks include `workspace:didCreateScene:withTransitionContext:completion:` and `workspace:willDestroyScene:withTransitionContext:completion:`.
+**FBSceneLayerManager:** Each `FBScene` maintains an ordered set of `FBSSceneLayer` objects, primarily `FBSCAContextSceneLayer` (representing main content) and `FBSExternalSceneLayer` (for embedded content from other scenes).
 
-The delegate methods often include an `FBSSceneTransitionContext`, which bundles information about the change, including animation settings and synchronization fences.
+**FBSceneHostManager:** Responsible for actual presentation of scene content within FrontBoard's UI hierarchy. It manages requests from multiple "requesters" wanting to display the scene content and provides `FBSceneHostView` instances.
 
-### 4. FrontBoard: The System's UI Conductor
+**FBSceneHostView:** A `UIView` subclass within the FrontBoard process that displays client application scene content using the `contextID` from the `FBSCAContextSceneLayer`. The `FBSceneHostAppearance` protocol defines rendering properties like `renderingMode`, `minificationFilterName`, and `appearanceStyle`.
 
-FrontBoard is a critical system component, typically running within the SpringBoard process or a similar system-level daemon. It is responsible for managing the lifecycle, layout, and presentation of all application and system scenes.
+#### 3.5. Transactional Operations and Scene Lifecycle
+
+FrontBoard uses its own transaction system, built upon `BSTransaction` from BaseBoard, to manage complex operations involving multiple steps or asynchronous work:
+
+*   **`FBTransaction`:** Base class for FrontBoard-specific transactions.
+*   **`FBApplicationProcessLaunchTransaction`:** Manages application process launch as part of scene updates.
+*   **`FBUpdateSceneTransaction`:** Coordinates single scene updates, including settings changes and client commit synchronization.
+*   **`FBApplicationUpdateScenesTransaction`:** Comprehensive transaction managing application launch and creation/update of multiple scenes simultaneously, often acting as a synchronized group (`FBSynchronizedTransactionGroup`).
+
+These transactions ensure operations like app opening and initial UI display occur in a coordinated, well-defined manner. The underlying remote layer architecture uses `CARemoteLayerClient` and `CARemoteLayerServer` mechanisms, where the `contextID` serves a similar purpose to `clientId` in efficiently referencing and compositing layer trees from different processes.
+
+### 4. Synchronization, Animation, and Cross-Process Coordination
+
+Smooth UI and animations, especially during transitions involving multiple processes, require careful coordination. iOS employs several layers of transactional and synchronization mechanisms.
 
 #### 4.1. `FBSceneManager`: Central Scene Authority
 The `FBSceneManager` is the core object within FrontBoard that oversees all `FBScene` instances. Its responsibilities include:
@@ -549,7 +495,7 @@ sequenceDiagram
 
 ### 6. The Render Server, Compositing, and Display Hardware
 
-The Render Server (`backboardd` on iOS, `WindowServer` on macOS) is responsible for taking the rendered output of all active `CAContext`s and compositing them together into the final image that is sent to the display hardware. While its internal workings are not detailed in these headers, its interactions with `CAContext` and scene management are evident.
+The Render Server (`backboardd` on iOS, `WindowServer` on macOS) is responsible for taking the rendered output of all active `CAContext`s and compositing them together into the final image that is sent to the display hardware.
 
 #### 6.1. The Render Server: Conceptual Overview
 *   **Central Compositor:** The Render Server is the ultimate authority on what appears on screen.
