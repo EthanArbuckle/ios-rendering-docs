@@ -50,8 +50,7 @@ This document provides an exploration of the iOS application rendering pipeline,
 
 6.  **Input Event Handling in the Rendering Context**  
     6.1. BackBoardServices and `BKSHIDEvent`  
-    6.2. Event Routing via `contextID` and `BKSEventFocusManager`  
-    6.3. `UIWindow` as the Event Target  
+    6.2. `UIWindow` as the Event Target  
 
 7.  **Specialized Rendering Paths and Considerations**  
     7.1. Direct GPU Rendering: `CAMetalLayer` and `CAOpenGLLayer`  
@@ -74,7 +73,7 @@ The rendering system is built upon several key abstractions:
 
 *   **`UIView` (UIKit):** The primary object applications use to define and manage UI elements and their event handling.
 *   **`CALayer` (QuartzCore):** The backing for every `UIView`, `CALayer` is the fundamental unit for 2D and 3D drawing, animation, and compositing. It holds content (like an image or custom drawing) and visual attributes.
-*   **`CAContext` (QuartzCore):** Represents an independent rendering destination managed by the system's Render Server. Each `UIWindow` typically manages a `CAContext` into which its `CALayer` tree is rendered. The `contextID` of a `CAContext` is a crucial system-wide identifier.
+*   **`CAContext` (QuartzCore):** Represents an independent rendering destination managed by the system's Render Server. Each `UIWindow` typically manages a `CAContext` into which its `CALayer` tree is rendered. The `contextID` of a `CAContext` is an important system-wide identifier; more on that later.
 *   **`FBSScene` / `FBScene` (FrontBoardServices/FrontBoard):** An abstraction representing a managed area on a display where an application can present its content. An `FBSScene` is the application's handle to this managed area, while an `FBScene` is the system-side (FrontBoard) representation.
 
 #### 1.4. The Client-Server Model for UI Management
@@ -83,7 +82,7 @@ UI presentation and window management in iOS operate on a client-server model:
 *   **Client (Application):** The application process, using UIKit and FrontBoardServices, defines its UI and interacts with the system to request display space and manage its presentation.
 *   **Server (System Services - primarily FrontBoard):** A system process (often part of SpringBoard) that manages system-wide UI state, orchestrates scenes from multiple applications, handles window layering, and interfaces with the Render Server.
 
-This separation allows the system to manage resources, security, and overall UI coherence, while applications focus on their specific content and interactions. Communication between the client and server typically occurs via XPC and Mach port-based mechanisms.
+This separation allows the system to manage resources and overall UI coherence, while applications focus on their specific content and interactions. Communication between the client and server typically occurs via XPC and Mach port-based mechanisms.
 
 #### 1.5. High-Level Rendering Flow
 A simplified view of the rendering flow is as follows:
@@ -414,14 +413,10 @@ The rendering context of a window is not only for drawing but also for receiving
 BackBoardServices is responsible for managing raw hardware input events (touches, keyboard, etc.):
 
 *   **`BKSHIDEvent`**: Represents a hardware input event.
-*   **Event Routing by `contextID`**: The crucial function `BKSHIDEventGetContextIDFromEvent` retrieves the `contextID` associated with an event, meaning the low-level input system is aware of which `CAContext` was under the touch point or has keyboard focus.
+*   **Event Routing by `contextID`**: `BKSHIDEventGetContextIDFromEvent` retrieves the `contextID` associated with an event, meaning the low-level input system is aware of which `CAContext` was under the touch point or has keyboard focus.
 *   **`BKSEventFocusManager`**: Located in `backboardd`, this manages which `contextID` (and by extension, which application window) currently has input focus. `UIWindow` interacts with this manager to inform the system about which context should receive primary input.
 
-#### 6.2. Event Routing via `contextID` and `BKSEventFocusManager`
-
-The crucial function `BKSHIDEventGetContextIDFromEvent` retrieves the `contextID` associated with an event, meaning the low-level input system is aware of which `CAContext` was under the touch point or has keyboard focus. The `BKSEventFocusManager`, located in `backboardd`, manages which `contextID` currently has input focus.
-
-#### 6.3. `UIWindow` as the Event Target
+#### 6.2. `UIWindow` as the Event Target
 
 1. BackBoardServices determines the `contextID` associated with an incoming HID event (e.g., a touch down).
 2. This `contextID` corresponds to a `CAContext` managed by a specific `UIWindow` (usually the key window or the window under the touch).
@@ -494,6 +489,3 @@ sequenceDiagram
     SpringBoard->>RenderServer: Instruct to draw contextID X at specified frame/level
     RenderServer->>Display: Composite and display initial frame
 ```
-
-This architecture allows for a clear separation of concerns, enabling applications to focus on their content while the system manages global UI orchestration, resource allocation, and efficient rendering.
-
