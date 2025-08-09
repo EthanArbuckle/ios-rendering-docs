@@ -1,6 +1,6 @@
 ## iOS Application Rendering: A Deep Dive
 
-This document provides an exploration of the iOS application rendering pipeline, from high-level UIKit API calls to the final presentation of pixels on the physical display. Areas of discussion include layer-based compositing, scene management, rendering and state synchronization, animation coordination, and input event handling.
+The iOS application rendering pipeline, from high-level UIKit API calls to the final presentation of pixels on the physical display. Areas of discussion include layer-based compositing, scene management, rendering and state synchronization, animation coordination, and input event handling.
 
 ---
 
