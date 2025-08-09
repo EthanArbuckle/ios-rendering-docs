@@ -175,7 +175,7 @@ graph TB
         ContextID["contextID: uint32_t<br/>(Mach Port Name)"]
     end
     
-    subgraph "WindowServer/SpringBoard Process"
+    subgraph "System Side"
         RenderServer["Render Server<br/>(backboardd)"]
         CAContextRegistry["CAContext Registry<br/>(contextID → Surface)"]
         CompositingEngine["Compositing Engine<br/>(Metal/GPU)"]
