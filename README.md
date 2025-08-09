@@ -90,7 +90,7 @@ A simplified view of the rendering flow is as follows:
 1.  An application, using UIKit, constructs a view hierarchy (`UIView` instances).
 2.  Each `UIView` is backed by a `CALayer`. These layers form a tree.
 3.  The `UIWindow`'s `CALayer` tree is rendered into a `CAContext` managed by the window.
-4.  The application, via FrontBoardServices (`FBSScene`, `FBSWorkspace`), communicates its desire to present this `CAContext` (identified by its `contextID`) to FrontBoard.
+4.  The application, via FrontBoardServices (`FBSScene`, `FBSWorkspace`), communicates its desire to present this `CAContext` (identified by its `contextID`) to FrontBoard (inside of SpringBoard).
 5.  FrontBoard (`FBSceneManager`, `FBScene`) receives this request and manages the "hosting" of the application's `CAContext`. It instructs the Render Server.
 6.  The Render Server composites the content from various `CAContext`s (from the app, other apps, system UI) into a final frame buffer.
 7.  The frame buffer is sent to the display hardware.
@@ -238,14 +238,14 @@ graph TB
 The `contextId` property of a `CAContext` is a unique 32-bit integer that serves as the critical bridge between an application's UI and the system's rendering infrastructure:
 
 *   **Render Server Identification:** It's how the Render Server (a separate system process) identifies and manages the specific drawing surface associated with that part of the application's UI.
-*   **Inter-Process Referencing:** System services like FrontBoard use this `contextID` to refer to and manipulate an application's renderable content without needing direct access to the app's `CALayer` objects. This enables remote hosting and scene management.
+*   **Inter-Process Referencing:** System services (like FrontBoard within SpringBoard) use this `contextID` to refer to and manipulate an application's renderable content without needing direct access to the app's `CALayer` objects. This enables remote hosting and scene management.
 *   **Event Routing:** BackBoardServices uses the `contextID` of the focused window/layer to route touch and other hardware events to the correct application and specific part of its UI.
 
 For standard applications, the context associated with a `UIWindow` is effectively a remote rendering target managed by the system, where rendering commands are sent to the Render Server for compositing.
 
 ### 3. Scene Management Architecture
 
-While `CAContext` provides a renderable surface, the *management* of an application's overall presence on screen, its lifecycle, and its interaction with other UI elements is handled at a higher level by "Scenes," orchestrated by the FrontBoard framework using a client-server architecture.
+While `CAContext` provides a renderable surface, the *management* of an application's overall presence on screen, its lifecycle, and its interaction with other UI elements is handled at a higher level by "Scenes," orchestrated by FrontBoard using a client-server architecture.
 
 #### 3.1. The Scene Abstraction and Client-Server Model
 
@@ -317,7 +317,7 @@ The server-side scene management enables remote rendering through several key co
 
 **FBSceneHostManager:** Responsible for actual presentation of scene content within FrontBoard's UI hierarchy. It manages requests from multiple "requesters" wanting to display the scene content and provides `FBSceneHostView` instances.
 
-**FBSceneHostView:** A `UIView` subclass within the FrontBoard process that displays client application scene content using the `contextID` from the `FBSCAContextSceneLayer`. The `FBSceneHostAppearance` protocol defines rendering properties like `renderingMode`, `minificationFilterName`, and `appearanceStyle`.
+**FBSceneHostView:** A `UIView` subclass within SpringBoard (where FrontBoard lives) that displays client application scene content using the `contextID` from the `FBSCAContextSceneLayer`. The `FBSceneHostAppearance` protocol defines rendering properties like `renderingMode`, `minificationFilterName`, and `appearanceStyle`.
 
 #### 3.5. Transactional Operations and Scene Lifecycle
 
@@ -410,7 +410,7 @@ The rendering context of a window is not only for drawing but also for receiving
 
 #### 6.1. BackBoardServices and `BKSHIDEvent`
 
-BackBoardServices is responsible for managing raw hardware input events (touches, keyboard, etc.):
+Located in `backboardd`, BackBoardServices is responsible for managing raw hardware input events (touches, keyboard, etc.):
 
 *   **`BKSHIDEvent`**: Represents a hardware input event.
 *   **Event Routing by `contextID`**: `BKSHIDEventGetContextIDFromEvent` retrieves the `contextID` associated with an event, meaning the low-level input system is aware of which `CAContext` was under the touch point or has keyboard focus.
