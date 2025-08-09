@@ -40,8 +40,6 @@ This document provides an exploration of the iOS application rendering pipeline,
     4.1. `CATransaction` and `CAAnimation` Fundamentals  
     4.2. `FBSSceneTransitionContext`: Coordinated Scene State Changes  
     4.3. `BKSAnimationFenceHandle`: Ensuring Visual Cohesion  
-        4.3.1. Fence Creation and Management  
-        4.3.2. `UIWindow`'s Role in Fence Coordination  
 
 5.  **The Render Server, Compositing, and Display Hardware**  
     5.1. The Render Server: Conceptual Overview  
@@ -148,36 +146,25 @@ QuartzCore provides the `CALayer` class and `CAContext` infrastructure for hardw
 *   **`anchorPoint`**: A normalized point (0,0 to 1,1) within the layer that `position` refers to and around which transformations (like rotation) occur. Defaults to (0.5, 0.5), the center.
 *   **`transform` (`CATransform3D`)**: An arbitrary 3D transformation matrix applied to the layer and its sublayers.
 *   **`frame`**: A derived property representing the layer's extent in its superlayer's coordinate system, calculated from `bounds`, `position`, `anchorPoint`, and `transform`.
-*   **`sublayers`**: An array of child `CALayer`s.
-*   **`superlayer`**: The parent `CALayer`.
-*   **`zPosition`**: Affects the front-to-back ordering of sibling layers without true 3D perspective (unless within a `CATransformLayer`).
 
 **Layer Content and Visual Effects:**
 A `CALayer` can display content through multiple mechanisms:
 
 *   **`contents` property**: Can be assigned a `CGImageRef` (or platform-specific types like `IOSurfaceRef`). This image is drawn into the layer's bounds, respecting `contentsGravity`, `contentsScale`, and `contentsRect`.
 *   **Custom Drawing (`drawInContext:`)**: A `CALayer` subclass can override `drawInContext:`, or its delegate can implement `drawLayer:inContext:`. Core Animation creates a graphics context (`CGContextRef`) representing the layer's backing store when content updates are needed.
-*   **`backgroundColor`**: A `CGColorRef` that fills the layer's bounds.
-*   **`borderColor` / `borderWidth`**: Defines a border drawn around the layer's bounds.
 
 Visual effects properties include:
 
-*   **`opacity`**: Controls transparency of the layer and its sublayers.
-*   **`cornerRadius`**: Creates rounded corners. If `masksToBounds` is `YES`, content outside these corners is clipped.
-*   **`shadowColor`, `shadowOpacity`, `shadowOffset`, `shadowRadius`, `shadowPath`**: Properties for rendering drop shadows.
 *   **`mask`**: Another `CALayer` whose alpha channel masks the receiver's content.
 *   **`filters`, `backgroundFilters`, `compositingFilter`**: Arrays of `CAFilter` objects for advanced visual effects.
 
 **Specialized CALayer Subtypes:**
-QuartzCore offers specialized `CALayer` subclasses for specific rendering tasks:
+QuartzCore offers specialized `CALayer` subclasses for specific rendering tasks, including:
 
-*   **`CATextLayer`**: Renders plain or attributed strings.
 *   **`CAShapeLayer`**: Renders shapes defined by `CGPathRef`, with stroke and fill properties.
-*   **`CAGradientLayer`**: Draws color gradients.
 *   **`CAMetalLayer` / `CAOpenGLLayer`**: Provide surfaces for direct GPU rendering, critical for games and graphics-intensive applications.
 *   **`CATiledLayer`**: Efficiently draws very large content by breaking it into tiles loaded on demand.
-*   **`CALayerHost`**: Displays content of a `CAContext` from potentially another process, identified by its `contextId`. Fundamental for remote hosting.
-*   **`CATransformLayer`**: Allows true 3D perspective in its sublayer hierarchy, unlike standard `CALayer` which flattens children.
+*   **`CALayerHost`**: Displays content of a `CAContext` from potentially another process, identified by its `contextID`. Fundamental for remote hosting.
 
 ##### 2.2.2. `CAContext`: The Bridge to the Render Server
 A `CAContext` is the object that embodies an independent rendering surface and layer tree managed by the system's Render Server. Each `UIWindow` typically creates and manages its own `CAContext`, into which its entire `CALayer` tree is rendered.
@@ -235,7 +222,7 @@ graph TB
 ```
 
 **The Significance of the `contextID`:**
-The `contextId` property of a `CAContext` is a unique 32-bit integer that serves as the critical bridge between an application's UI and the system's rendering infrastructure:
+The `contextID` property of a `CAContext` is a unique 32-bit integer token assigned by Core Animation that serves as the bridge between an application's UI and the system's rendering infrastructure. It is not itself a Mach port name, but can be mapped by Core Animation to the underlying Mach port or surface reference used for remote hosting:
 
 *   **Render Server Identification:** It's how the Render Server (a separate system process) identifies and manages the specific drawing surface associated with that part of the application's UI.
 *   **Inter-Process Referencing:** System services (like FrontBoard within SpringBoard) use this `contextID` to refer to and manipulate an application's renderable content without needing direct access to the app's `CALayer` objects. This enables remote hosting and scene management.
@@ -354,22 +341,19 @@ When an application or FrontBoard initiates a change to scene settings (e.g., re
 
 #### 4.3. `BKSAnimationFenceHandle`: Ensuring Visual Cohesion
 
-`BKSAnimationFenceHandle` (often aliased as `FBSCAFenceHandle`) is a vital mechanism for synchronizing animations and rendering updates across different processes or even across different `CAContext`s within the same process.
+`BKSAnimationFenceHandle` (also seen as `FBSCAFenceHandle`) is a CoreAnimation/BackBoard mechanism for synchronizing rendering updates across processes or CAContexts so that complex transitions appear visually aligned.
 
-**Purpose:** When a complex UI transition involves multiple independent entities animating (e.g., an application animating its content while the system animates the window frame), fences ensure these animations appear visually coordinated.
+**Purpose:** When a complex UI transition involves multiple independent entities animating (e.g., an application animating its content while the system animates the window frame), fences ensure resulting frames are presented in the same display refresh, avoiding tearing or phase mismatches.
 
 **Mechanism:**  
 
-1. A fence handle represents a reference to an underlying synchronization primitive managed by the system.
-2. A `CAContext` can create a Mach port representing a new fence via `createFencePort`. This port is the "trigger" for the fence.
-3. This fence port (or a `BKSAnimationFenceHandle` wrapping it) can be associated with a `CATransaction` in one or more `CAContext`s using `setFencePort:`.
-4. A `CATransaction` that has a fence set will *not* allow its changes to be fully committed and made visible by the Render Server until the corresponding fence is "signaled" or "cleared."
+1. A fence handle is a reference to a system-managed synchronization primitive.
+2. A `CAContext` can create a new fence via `createFencePort`. On older iOS this returns a Mach port; on newer versions it may return an XPC-wrapped fence descriptor.
+3. The fence handle can be wrapped in a `BKSAnimationFenceHandle` and passed to other processes or subsystems.
+4. Associating the fence with a `CATransaction` (via `setFencePort:`) prevents the transaction’s commits from being displayed by the Render Server until the fence is signaled or released.
 
-##### 4.3.1. Fence Creation and Management
-A `CAContext` can create a Mach port representing a new fence via `createFencePort`. This port is the "trigger" for the fence and can be embedded in a `BKSAnimationFenceHandle`. When this fence port is associated with a `CATransaction` using `setFencePort:`, the transaction will not commit its changes to the Render Server until the fence is signaled or cleared.
-
-##### 4.3.2. `UIWindow`'s Role in Fence Coordination
-`UIWindow` implements methods like `_synchronizeDrawingWithFence:preCommitHandler:` and `_synchronizeDrawingAcrossProcessesOverPort:`, applying fences to relevant `CAContext`s. This ensures that visual changes from different processes hit the screen in the same display refresh cycle, preventing tearing or visual disjointedness.
+**`UIWindow` Coordination:**
+`UIWindow` methods such as `_synchronizeDrawingWithFence:preCommitHandler:` and `_synchronizeDrawingAcrossProcessesOverPort:` attach these fences to its `CAContext` commits, ensuring that updates from multiple processes reach the screen in the same vsync cycle.
 
 ### 5. The Render Server, Compositing, and Display Hardware
 
